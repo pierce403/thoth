@@ -370,34 +370,34 @@
           <div class="step">
             <span>1</span>
             <div>
-              <strong>Install dependencies</strong>
+              <strong>Clone the repo</strong>
               <pre>
 git clone https://github.com/pierce403/thoth
 cd thoth
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-python -m playwright install
               </pre>
             </div>
           </div>
           <div class="step">
             <span>2</span>
             <div>
-              <strong>Configure your channels</strong>
+              <strong>Run the sync loop</strong>
+              <pre>
+./sync.sh --config config/thoth.toml
+              </pre>
               <p>
-                Update <code>config/thoth.toml</code> with your Discord server and channel URLs, then
-                enable them for sync.
+                The first run bootstraps dependencies, opens three browser tabs (Discord, Slack,
+                Telegram), and waits for you to log in.
               </p>
             </div>
           </div>
           <div class="step">
             <span>3</span>
             <div>
-              <strong>Start the sync loop</strong>
-              <pre>
-./sync.sh --config config/thoth.toml
-              </pre>
+              <strong>Fine-tune sources</strong>
+              <p>
+                If you only want Discord, disable Slack/Telegram in <code>config/thoth.toml</code>.
+                You can also add explicit Slack/Telegram channels there when you are ready.
+              </p>
             </div>
           </div>
         </div>

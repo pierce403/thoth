@@ -10,16 +10,7 @@ Thoth is an agentic assistant that monitors public community chats (Discord, Sla
 - **No secrets** in code or env; login happens interactively in the visible browser
 
 ## Quickstart
-1) Create a virtualenv and install deps:
-
-```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-python -m playwright install
-```
-
-2) Copy and edit the config:
+1) Copy and edit the config:
 
 ```bash
 cp config/thoth.toml config/thoth.local.toml
@@ -27,13 +18,13 @@ cp config/thoth.toml config/thoth.local.toml
 
 Update `config/thoth.local.toml` with the channels you want to monitor. Selectors are intentionally exposed so you can tune them if the DOM changes.
 
-3) Run the sync loop (browser will open visibly and stay open):
+2) Run the sync loop (bootstraps dependencies and opens the browser):
 
 ```bash
 ./sync.sh --config config/thoth.local.toml
 ```
 
-4) Run the agent (XMTP):
+3) Run the agent (XMTP):
 
 ```bash
 ./agent.sh --config config/thoth.local.toml

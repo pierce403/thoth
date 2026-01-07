@@ -5,6 +5,7 @@ LOOP_DELAY="${THOTH_LOOP_DELAY:-20}"
 WATCH_INTERVAL="${THOTH_WATCH_INTERVAL:-2}"
 RESTART_ON_CHANGE="${THOTH_RESTART_ON_CHANGE:-1}"
 PYTHON_BIN="${THOTH_PYTHON:-}"
+SYSTEM_PYTHON=""
 CONFIG_PATH=""
 PID_FILE="logs/sync.pid"
 
@@ -40,18 +41,42 @@ if [ -z "$CONFIG_PATH" ]; then
   CONFIG_PATH="config/thoth.toml"
 fi
 
-if [ -z "$PYTHON_BIN" ]; then
-  if [ -x ".venv/bin/python" ]; then
-    PYTHON_BIN=".venv/bin/python"
-  elif command -v python3 >/dev/null 2>&1; then
-    PYTHON_BIN="$(command -v python3)"
-  elif command -v python >/dev/null 2>&1; then
-    PYTHON_BIN="$(command -v python)"
-  else
-    echo "python not found. Create a venv or set THOTH_PYTHON." >&2
-    exit 1
-  fi
+if command -v python3 >/dev/null 2>&1; then
+  SYSTEM_PYTHON="$(command -v python3)"
+elif command -v python >/dev/null 2>&1; then
+  SYSTEM_PYTHON="$(command -v python)"
 fi
+
+if [ -z "$PYTHON_BIN" ]; then
+  if [ ! -x ".venv/bin/python" ]; then
+    if [ -z "$SYSTEM_PYTHON" ]; then
+      echo "python not found. Install python3 or set THOTH_PYTHON." >&2
+      exit 1
+    fi
+    "$SYSTEM_PYTHON" -m venv .venv
+  fi
+  PYTHON_BIN=".venv/bin/python"
+fi
+
+ensure_dependencies() {
+  if ! "$PYTHON_BIN" - <<'PY' >/dev/null 2>&1
+import importlib.util
+import sys
+sys.exit(0 if importlib.util.find_spec("playwright") else 1)
+PY
+  then
+    "$PYTHON_BIN" -m pip install -r requirements.txt
+  fi
+
+  if [ ! -f "logs/playwright.browsers" ]; then
+    if "$PYTHON_BIN" -m playwright install; then
+      touch "logs/playwright.browsers"
+    else
+      echo "Playwright browser install failed. You may need: sudo playwright install-deps" >&2
+      exit 1
+    fi
+  fi
+}
 
 mkdir -p "$(dirname "$PID_FILE")"
 if [ -f "$PID_FILE" ]; then
@@ -72,6 +97,8 @@ cleanup() {
 }
 
 trap cleanup EXIT INT TERM
+
+ensure_dependencies
 
 hash_files() {
   local hash_tool=""
