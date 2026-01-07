@@ -12,6 +12,7 @@ import sqlite3
 from thoth import config as config_module
 from thoth import db
 from thoth.sync.models import MessageData, ReactionData
+from thoth.sync import tasks as task_module
 from thoth.sync.utils import extract_messages, parse_timestamp, scroll_to_bottom, scroll_up
 
 LOGGER = logging.getLogger(__name__)
@@ -159,7 +160,7 @@ def sync_channel(
     channel_url: str,
     scrape_config: Dict[str, Any],
     label: str,
-) -> None:
+) -> dict:
     state = db.get_sync_state(conn, source_id, channel_id)
     mode = state["mode"] or "recent"
     idle_cycles = int(state["idle_cycles"] or 0)
@@ -240,6 +241,14 @@ def sync_channel(
         backfill_inserted,
         backfill_edited,
     )
+    return {
+        "status": "ok",
+        "details": (
+            f"mode={mode} recent_inserted={recent_results['inserted']} "
+            f"recent_edited={recent_results['edited']} "
+            f"backfill_inserted={backfill_inserted} backfill_edited={backfill_edited}"
+        ),
+    }
 
 
 def prepare_session(
@@ -301,6 +310,8 @@ def run_cycle(
     pages_by_source: Dict[str, Page],
     scrapers_by_source: Dict[str, GenericScraper],
 ) -> None:
+    queue = task_module.TaskQueue()
+
     for source in enabled_sources:
         enabled_channels = [channel for channel in source.channels if channel.enabled]
         if not enabled_channels:
@@ -314,6 +325,41 @@ def run_cycle(
         scraper = scrapers_by_source[source.name]
         page = pages_by_source[source.name]
 
+        def notification_action(page=page, scraper=scraper, base_url=source.base_url):
+            needs_login = scraper.login_required(page, base_url)
+            if needs_login:
+                scraper.wait_for_login(page)
+                return {"status": "login", "details": "login required"}
+            page.wait_for_timeout(500)
+            return {"status": "ok", "details": "checked notifications"}
+
+        def server_check_action(page=page, scraper=scraper, base_url=source.base_url):
+            needs_login = scraper.login_required(page, base_url)
+            if needs_login:
+                scraper.wait_for_login(page)
+                return {"status": "login", "details": "login required"}
+            page.wait_for_timeout(500)
+            return {"status": "ok", "details": "checked server list"}
+
+        queue.add(
+            task_module.Task(
+                name="check_notifications",
+                source=source.name,
+                channel=None,
+                reason="periodic check for unread activity",
+                action=notification_action,
+            )
+        )
+        queue.add(
+            task_module.Task(
+                name="check_servers",
+                source=source.name,
+                channel=None,
+                reason="ensure source is responsive before channel sync",
+                action=server_check_action,
+            )
+        )
+
         for channel in enabled_channels:
             channel_external_id = channel.url
             channel_id = db.upsert_channel(
@@ -323,20 +369,45 @@ def run_cycle(
                 external_id=channel_external_id,
                 url=channel.url,
             )
-            LOGGER.info("Syncing %s:%s", source.name, channel.name)
-            try:
-                sync_channel(
+            state = db.get_sync_state(conn, source_id, channel_id)
+            mode = state["mode"] or "recent"
+            reason = "read recent activity" if mode == "recent" else "backfill backlog"
+
+            def make_sync_action(
+                page=page,
+                scraper=scraper,
+                source_id=source_id,
+                channel_id=channel_id,
+                channel_url=channel.url,
+                label=f"{source.name}:{channel.name}",
+            ):
+                return sync_channel(
                     page,
                     scraper,
                     conn,
                     source_id,
                     channel_id,
-                    channel.url,
+                    channel_url,
                     config.scrape,
-                    f"{source.name}:{channel.name}",
+                    label,
                 )
-            except Exception as exc:  # noqa: BLE001
-                LOGGER.exception("Sync failed for %s:%s: %s", source.name, channel.name, exc)
+
+            queue.add(
+                task_module.Task(
+                    name="sync_channel",
+                    source=source.name,
+                    channel=channel.name,
+                    reason=reason,
+                    action=make_sync_action,
+                )
+            )
+
+    if not queue.tasks:
+        LOGGER.warning("No tasks queued for this cycle.")
+        return
+
+    LOGGER.info("Task queue ready with %d tasks.", len(queue.tasks))
+    queue.run()
 
 
 def run_once(config_path: Optional[str] = None) -> None:
@@ -386,6 +457,7 @@ def setup_logging() -> None:
         handlers=[logging.StreamHandler(), logging.FileHandler(log_path, encoding="utf-8")],
         force=True,
     )
+    task_module.configure_task_logger(log_dir)
 
 
 def main() -> None:
