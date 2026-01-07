@@ -257,6 +257,8 @@ def prepare_session(
         user_data_dir=str(profile_dir),
         headless=False,
         slow_mo=config.slow_mo_ms,
+        viewport=None,
+        args=["--start-maximized"],
     )
 
     enabled_sources = [source for source in config.sources if source.enabled]
