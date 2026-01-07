@@ -1,0 +1,436 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Thoth - Agentic Community Chat Archivist</title>
+    <meta
+      name="description"
+      content="Thoth is an agentic assistant that gently watches community chats, captures messages, and builds a searchable archive for RAG and research."
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600&family=Source+Sans+3:wght@300;400;600&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        color-scheme: light;
+        --paper: #f6f0e6;
+        --ink: #1f2430;
+        --sun: #d9b56c;
+        --moon: #c8d6e8;
+        --night: #1a2a3a;
+        --accent: #2f6f7e;
+        --rose: #b97463;
+        --shadow: 0 24px 60px rgba(31, 36, 48, 0.15);
+      }
+
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+
+      body {
+        background: radial-gradient(circle at 15% 15%, #ffffff, var(--paper) 40%, #e8dfd0 100%);
+        color: var(--ink);
+        font-family: "Source Sans 3", "Segoe UI", sans-serif;
+        line-height: 1.6;
+        min-height: 100vh;
+      }
+
+      a {
+        color: inherit;
+        text-decoration: none;
+      }
+
+      .page {
+        position: relative;
+        overflow: hidden;
+      }
+
+      .backdrop {
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+        z-index: 0;
+      }
+
+      .glow {
+        position: absolute;
+        width: 520px;
+        height: 520px;
+        background: radial-gradient(circle, rgba(200, 214, 232, 0.6), rgba(200, 214, 232, 0));
+        top: -120px;
+        right: -120px;
+        filter: blur(6px);
+        animation: drift 14s ease-in-out infinite;
+      }
+
+      .glow--sun {
+        background: radial-gradient(circle, rgba(217, 181, 108, 0.55), rgba(217, 181, 108, 0));
+        width: 420px;
+        height: 420px;
+        bottom: -160px;
+        left: -120px;
+        top: auto;
+        right: auto;
+        animation-delay: -6s;
+      }
+
+      @keyframes drift {
+        0%,
+        100% {
+          transform: translateY(0px) translateX(0px);
+        }
+        50% {
+          transform: translateY(18px) translateX(-12px);
+        }
+      }
+
+      .hero {
+        position: relative;
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+        gap: 40px;
+        padding: 72px clamp(24px, 6vw, 96px) 48px;
+        z-index: 1;
+      }
+
+      .tag {
+        text-transform: uppercase;
+        letter-spacing: 0.4em;
+        font-size: 12px;
+        color: var(--accent);
+      }
+
+      h1 {
+        font-family: "Cinzel", "Times New Roman", serif;
+        font-size: clamp(40px, 6vw, 72px);
+        margin: 14px 0 12px;
+      }
+
+      .hero p {
+        max-width: 520px;
+        font-size: 18px;
+        margin-bottom: 24px;
+      }
+
+      .cta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        align-items: center;
+      }
+
+      .button {
+        padding: 12px 22px;
+        border-radius: 999px;
+        background: var(--night);
+        color: #fdf7ea;
+        font-weight: 600;
+        letter-spacing: 0.03em;
+        box-shadow: var(--shadow);
+        transition: transform 0.2s ease, box-shadow 0.2s ease;
+      }
+
+      .button:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 18px 36px rgba(31, 36, 48, 0.2);
+      }
+
+      .meta {
+        font-size: 14px;
+        color: #4d5562;
+      }
+
+      .hero__art {
+        position: relative;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 320px;
+      }
+
+      .ibis-card {
+        background: rgba(255, 255, 255, 0.6);
+        padding: 24px;
+        border-radius: 28px;
+        box-shadow: var(--shadow);
+        backdrop-filter: blur(6px);
+      }
+
+      .ibis-card svg {
+        width: min(420px, 80vw);
+        height: auto;
+        display: block;
+      }
+
+      .section {
+        padding: 48px clamp(24px, 6vw, 96px);
+        position: relative;
+        z-index: 1;
+      }
+
+      .section h2 {
+        font-family: "Cinzel", "Times New Roman", serif;
+        font-size: clamp(28px, 4vw, 40px);
+        margin-bottom: 16px;
+      }
+
+      .grid {
+        display: grid;
+        gap: 24px;
+        grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      }
+
+      .card {
+        background: #ffffff;
+        border-radius: 20px;
+        padding: 22px;
+        box-shadow: var(--shadow);
+        border: 1px solid rgba(31, 36, 48, 0.08);
+      }
+
+      .card h3 {
+        font-size: 18px;
+        margin-bottom: 8px;
+      }
+
+      .steps {
+        display: grid;
+        gap: 16px;
+      }
+
+      .step {
+        display: flex;
+        gap: 16px;
+        align-items: flex-start;
+      }
+
+      .step span {
+        width: 34px;
+        height: 34px;
+        border-radius: 50%;
+        background: var(--sun);
+        color: #1c1d20;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        font-weight: 700;
+      }
+
+      pre {
+        background: #121821;
+        color: #f8f2e6;
+        padding: 16px;
+        border-radius: 16px;
+        overflow-x: auto;
+        font-size: 14px;
+      }
+
+      .note {
+        background: rgba(47, 111, 126, 0.1);
+        border-left: 4px solid var(--accent);
+        padding: 16px;
+        border-radius: 12px;
+        margin-top: 18px;
+      }
+
+      footer {
+        padding: 32px clamp(24px, 6vw, 96px) 48px;
+        color: #5a616d;
+        font-size: 14px;
+      }
+
+      @media (max-width: 720px) {
+        .hero {
+          padding-top: 56px;
+        }
+
+        .ibis-card {
+          padding: 18px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="page">
+      <div class="backdrop">
+        <div class="glow"></div>
+        <div class="glow glow--sun"></div>
+      </div>
+
+      <header class="hero">
+        <div>
+          <div class="tag">Agentic Archivist</div>
+          <h1>Thoth</h1>
+          <p>
+            Thoth is an agentic assistant inspired by the Egyptian moon god of knowledge. It gently
+            watches community chats, captures messages and edits, and builds a searchable archive
+            for research, RAG, and long-term memory.
+          </p>
+          <div class="cta">
+            <a class="button" href="#setup">Set It Up</a>
+            <div class="meta">Headful Playwright · SQLite · XMTP</div>
+          </div>
+        </div>
+        <div class="hero__art">
+          <div class="ibis-card">
+            <svg viewBox="0 0 520 360" role="img" aria-label="Stylized ibis and moon">
+              <defs>
+                <linearGradient id="moon" x1="0%" y1="0%" x2="100%" y2="100%">
+                  <stop offset="0%" stop-color="#dbe7f5" />
+                  <stop offset="100%" stop-color="#afc2dc" />
+                </linearGradient>
+                <linearGradient id="feather" x1="0%" y1="0%" x2="100%" y2="0%">
+                  <stop offset="0%" stop-color="#2f6f7e" />
+                  <stop offset="100%" stop-color="#1a2a3a" />
+                </linearGradient>
+              </defs>
+              <circle cx="410" cy="90" r="70" fill="url(#moon)" opacity="0.9" />
+              <circle cx="380" cy="80" r="12" fill="#f6f0e6" opacity="0.8" />
+              <path
+                d="M120 280 C140 220, 190 170, 260 150 C320 132, 352 98, 368 50"
+                fill="none"
+                stroke="url(#feather)"
+                stroke-width="14"
+                stroke-linecap="round"
+              />
+              <path
+                d="M150 290 C185 260, 210 230, 230 200 C250 170, 270 160, 300 165"
+                fill="none"
+                stroke="#b97463"
+                stroke-width="10"
+                stroke-linecap="round"
+              />
+              <path
+                d="M108 300 C120 240, 150 210, 180 200 C210 190, 230 200, 240 230"
+                fill="none"
+                stroke="#1f2430"
+                stroke-width="12"
+                stroke-linecap="round"
+              />
+              <path
+                d="M260 150 C255 120, 240 100, 215 92 C185 82, 160 90, 150 120"
+                fill="none"
+                stroke="#1f2430"
+                stroke-width="10"
+                stroke-linecap="round"
+              />
+              <circle cx="210" cy="115" r="6" fill="#1f2430" />
+              <path
+                d="M200 132 C184 160, 170 190, 160 225"
+                fill="none"
+                stroke="#b97463"
+                stroke-width="8"
+                stroke-linecap="round"
+              />
+            </svg>
+          </div>
+        </div>
+      </header>
+
+      <section class="section" id="what">
+        <h2>What we are building</h2>
+        <div class="grid">
+          <div class="card">
+            <h3>Slow, respectful sync</h3>
+            <p>
+              Thoth scrolls gently through active conversations, prioritizing recent messages before
+              backfilling history. It stays headful so you can see exactly what it is doing.
+            </p>
+          </div>
+          <div class="card">
+            <h3>Universal chat memory</h3>
+            <p>
+              Messages, edits, reactions, and threading are normalized into a single SQLite schema
+              that mirrors Postgres, ready for later vector search workflows.
+            </p>
+          </div>
+          <div class="card">
+            <h3>Human-in-the-loop login</h3>
+            <p>
+              Thoth never stores secrets. If a platform requires authentication, it navigates to the
+              login screen and waits for you to sign in.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="setup">
+        <h2>Setup in three steps</h2>
+        <div class="steps">
+          <div class="step">
+            <span>1</span>
+            <div>
+              <strong>Install dependencies</strong>
+              <pre>
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+python -m playwright install
+              </pre>
+            </div>
+          </div>
+          <div class="step">
+            <span>2</span>
+            <div>
+              <strong>Configure your channels</strong>
+              <p>
+                Update <code>config/thoth.toml</code> with your Discord server and channel URLs, then
+                enable them for sync.
+              </p>
+            </div>
+          </div>
+          <div class="step">
+            <span>3</span>
+            <div>
+              <strong>Start the sync loop</strong>
+              <pre>
+./sync.sh --config config/thoth.toml
+              </pre>
+            </div>
+          </div>
+        </div>
+        <div class="note">
+          <strong>Tip:</strong> The sync process keeps a visible browser open and will restart itself
+          if the Python code or config changes, so you can keep editing while it runs.
+        </div>
+      </section>
+
+      <section class="section" id="about">
+        <h2>Why Thoth?</h2>
+        <div class="grid">
+          <div class="card">
+            <h3>Memory for communities</h3>
+            <p>
+              The flow of chat moves fast. Thoth captures the living record of a community without
+              requiring brittle API integrations.
+            </p>
+          </div>
+          <div class="card">
+            <h3>Designed for RAG</h3>
+            <p>
+              The schema is prepared for future embeddings and pgvector workflows, so you can layer
+              retrieval, summarization, and analytics on top.
+            </p>
+          </div>
+          <div class="card">
+            <h3>Moonlit craftsmanship</h3>
+            <p>
+              Inspired by the ibis-headed scribe of the moon, Thoth focuses on clarity, patience,
+              and observability while working alongside you.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <footer>
+        Built with care. Respect community norms and platform terms whenever you deploy Thoth.
+      </footer>
+    </div>
+  </body>
+</html>
