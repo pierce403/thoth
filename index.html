@@ -175,6 +175,13 @@
         display: block;
       }
 
+      .logo-img {
+        width: min(420px, 80vw);
+        height: auto;
+        display: block;
+        border-radius: 18px;
+      }
+
       .section {
         padding: 48px clamp(24px, 6vw, 96px);
         position: relative;
@@ -325,56 +332,7 @@
         </div>
         <div class="hero__art">
           <div class="ibis-card">
-            <svg viewBox="0 0 520 360" role="img" aria-label="Stylized ibis and moon">
-              <defs>
-                <linearGradient id="moon" x1="0%" y1="0%" x2="100%" y2="100%">
-                  <stop offset="0%" stop-color="#dbe7f5" />
-                  <stop offset="100%" stop-color="#afc2dc" />
-                </linearGradient>
-                <linearGradient id="feather" x1="0%" y1="0%" x2="100%" y2="0%">
-                  <stop offset="0%" stop-color="#2f6f7e" />
-                  <stop offset="100%" stop-color="#1a2a3a" />
-                </linearGradient>
-              </defs>
-              <circle cx="410" cy="90" r="70" fill="url(#moon)" opacity="0.9" />
-              <circle cx="380" cy="80" r="12" fill="#f6f0e6" opacity="0.8" />
-              <path
-                d="M120 280 C140 220, 190 170, 260 150 C320 132, 352 98, 368 50"
-                fill="none"
-                stroke="url(#feather)"
-                stroke-width="14"
-                stroke-linecap="round"
-              />
-              <path
-                d="M150 290 C185 260, 210 230, 230 200 C250 170, 270 160, 300 165"
-                fill="none"
-                stroke="#b97463"
-                stroke-width="10"
-                stroke-linecap="round"
-              />
-              <path
-                d="M108 300 C120 240, 150 210, 180 200 C210 190, 230 200, 240 230"
-                fill="none"
-                stroke="#1f2430"
-                stroke-width="12"
-                stroke-linecap="round"
-              />
-              <path
-                d="M260 150 C255 120, 240 100, 215 92 C185 82, 160 90, 150 120"
-                fill="none"
-                stroke="#1f2430"
-                stroke-width="10"
-                stroke-linecap="round"
-              />
-              <circle cx="210" cy="115" r="6" fill="#1f2430" />
-              <path
-                d="M200 132 C184 160, 170 190, 160 225"
-                fill="none"
-                stroke="#b97463"
-                stroke-width="8"
-                stroke-linecap="round"
-              />
-            </svg>
+            <img class="logo-img" src="thoth-fancy.jpeg" alt="Thoth ibis and moon artwork" />
           </div>
         </div>
       </header>
