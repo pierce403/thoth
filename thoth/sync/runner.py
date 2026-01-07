@@ -4,7 +4,9 @@ import argparse
 import logging
 import hashlib
 import pathlib
+import re
 from typing import Any, Dict, Optional
+from urllib.parse import urljoin
 
 from playwright.sync_api import sync_playwright, Page
 import sqlite3
@@ -22,6 +24,70 @@ LOGIN_SELECTORS = {
     "slack": "input[name='email']",
     "telegram": "input[type='tel'], input[name='phone_number']",
 }
+
+DISCORD_BASE = "https://discord.com"
+
+
+def _normalize_discord_url(href: str) -> str:
+    return urljoin(DISCORD_BASE, href)
+
+
+def _extract_discord_ids(href: str) -> Optional[tuple[str, str]]:
+    match = re.search(r"/channels/([^/]+)/([^/]+)", href)
+    if not match:
+        return None
+    return match.group(1), match.group(2)
+
+
+def discover_discord_channels(page: Page, base_url: str) -> list[dict]:
+    page.goto(base_url, wait_until="load")
+    page.wait_for_timeout(1000)
+    raw_links = page.evaluate(
+        """
+        () => Array.from(document.querySelectorAll("a[href*='/channels/']"))
+          .map(el => ({
+            href: el.getAttribute('href') || '',
+            text: (el.innerText || '').trim(),
+            aria: el.getAttribute('aria-label') || ''
+          }))
+        """
+    )
+    guild_ids: set[str] = set()
+    for link in raw_links:
+        ids = _extract_discord_ids(link.get("href", ""))
+        if ids:
+            guild_ids.add(ids[0])
+
+    channels: list[dict] = []
+    seen_urls: set[str] = set()
+    for guild_id in sorted(guild_ids):
+        guild_url = f"{DISCORD_BASE}/channels/{guild_id}"
+        page.goto(guild_url, wait_until="load")
+        page.wait_for_timeout(1200)
+        channel_links = page.evaluate(
+            """
+            (guildId) => Array.from(document.querySelectorAll(`a[href*='/channels/${guildId}/']`))
+              .map(el => ({
+                href: el.getAttribute('href') || '',
+                text: (el.innerText || '').trim(),
+                aria: el.getAttribute('aria-label') || ''
+              }))
+            """,
+            guild_id,
+        )
+        for link in channel_links:
+            href = link.get("href") or ""
+            ids = _extract_discord_ids(href)
+            if not ids:
+                continue
+            url = _normalize_discord_url(href)
+            if url in seen_urls:
+                continue
+            seen_urls.add(url)
+            name = link.get("text") or link.get("aria") or f"channel-{ids[1]}"
+            channels.append({"name": name, "url": url, "guild_id": ids[0], "channel_id": ids[1]})
+
+    return channels
 
 
 class GenericScraper:
@@ -314,13 +380,6 @@ def run_cycle(
 
     for source in enabled_sources:
         enabled_channels = [channel for channel in source.channels if channel.enabled]
-        if not enabled_channels:
-            LOGGER.warning(
-                "No enabled channels for source %s. Enable channels in config to sync.",
-                source.name,
-            )
-            continue
-
         source_id = db.upsert_source(conn, source.name, source.type, source.base_url)
         scraper = scrapers_by_source[source.name]
         page = pages_by_source[source.name]
@@ -359,6 +418,88 @@ def run_cycle(
                 action=server_check_action,
             )
         )
+
+        if not enabled_channels:
+            if source.type != "discord":
+                LOGGER.warning(
+                    "No enabled channels for source %s. Enable channels in config to sync.",
+                    source.name,
+                )
+                continue
+
+            LOGGER.warning(
+                "No enabled channels for source %s. Auto-discovering Discord channels.",
+                source.name,
+            )
+
+            def discovery_action(
+                page=page,
+                scraper=scraper,
+                base_url=source.base_url,
+                source_name=source.name,
+                source_id=source_id,
+            ):
+                needs_login = scraper.login_required(page, base_url)
+                if needs_login:
+                    scraper.wait_for_login(page)
+                discovered = discover_discord_channels(page, base_url)
+                for item in discovered:
+                    channel_id = db.upsert_channel(
+                        conn,
+                        source_id=source_id,
+                        name=item["name"],
+                        external_id=item["url"],
+                        url=item["url"],
+                        metadata={"guild_id": item.get("guild_id"), "channel_id": item.get("channel_id")},
+                    )
+                    state = db.get_sync_state(conn, source_id, channel_id)
+                    mode = state["mode"] or "recent"
+                    reason = "read recent activity" if mode == "recent" else "backfill backlog"
+
+                    def make_sync_action(
+                        page=page,
+                        scraper=scraper,
+                        source_id=source_id,
+                        channel_id=channel_id,
+                        channel_url=item["url"],
+                        label=f"{source_name}:{item['name']}",
+                    ):
+                        return sync_channel(
+                            page,
+                            scraper,
+                            conn,
+                            source_id,
+                            channel_id,
+                            channel_url,
+                            config.scrape,
+                            label,
+                        )
+
+                    queue.add(
+                        task_module.Task(
+                            name="sync_channel",
+                            source=source_name,
+                            channel=item["name"],
+                            reason=reason,
+                            action=make_sync_action,
+                        )
+                    )
+
+                return {
+                    "status": "ok",
+                    "details": f"discovered_channels={len(discovered)}",
+                }
+
+            queue.add(
+                task_module.Task(
+                    name="discover_channels",
+                    source=source.name,
+                    channel=None,
+                    reason="no channels configured; auto-discover all visible Discord channels",
+                    action=discovery_action,
+                )
+            )
+            continue
 
         for channel in enabled_channels:
             channel_external_id = channel.url
