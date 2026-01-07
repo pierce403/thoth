@@ -6,6 +6,7 @@ import hashlib
 import pathlib
 import re
 import sys
+import os
 from typing import Any, Dict, Optional
 from urllib.parse import urljoin
 
@@ -627,6 +628,8 @@ def run_forever(config_path: Optional[str] = None) -> None:
         conn, context, enabled_sources, pages_by_source, scrapers_by_source = prepare_session(
             config, playwright
         )
+        parent_pid_env = os.getenv("THOTH_PARENT_PID")
+        parent_pid = int(parent_pid_env) if parent_pid_env and parent_pid_env.isdigit() else None
         context_closed = {"closed": False}
 
         def _mark_closed() -> None:
@@ -638,6 +641,9 @@ def run_forever(config_path: Optional[str] = None) -> None:
             pass
         loop_delay = max(1, int(config.loop_delay_seconds))
         while True:
+            if parent_pid and os.getppid() != parent_pid:
+                LOGGER.error("Sync parent process is gone; stopping sync.")
+                raise SystemExit(4)
             if context_closed["closed"]:
                 LOGGER.error("Browser closed; stopping sync.")
                 context.close()
