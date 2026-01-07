@@ -37,6 +37,7 @@ Keep this file current with anything learned while working in the repo. Add/upda
 - Run one sync pass: `python -m thoth.sync --config config/thoth.toml`
 - Run sync loop: `./sync.sh --config config/thoth.toml`
 - Run agent (stdio): `./agent.sh --config config/thoth.toml --stdio`
+- Stats for database: `./stats.sh --config config/thoth.toml`
 
 ## Known pitfalls / notes
 - Playwright may require system deps; if the browser fails to launch, run `sudo playwright install-deps`.
