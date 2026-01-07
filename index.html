@@ -25,6 +25,13 @@
         --accent: #2f6f7e;
         --rose: #b97463;
         --shadow: 0 24px 60px rgba(31, 36, 48, 0.15);
+        --card: #ffffff;
+        --muted: #4d5562;
+        --surface: #e8dfd0;
+        --code-bg: #121821;
+        --code-ink: #f8f2e6;
+        --note-bg: rgba(47, 111, 126, 0.1);
+        --note-border: #2f6f7e;
       }
 
       * {
@@ -34,7 +41,7 @@
       }
 
       body {
-        background: radial-gradient(circle at 15% 15%, #ffffff, var(--paper) 40%, #e8dfd0 100%);
+        background: radial-gradient(circle at 15% 15%, #ffffff, var(--paper) 40%, var(--surface) 100%);
         color: var(--ink);
         font-family: "Source Sans 3", "Segoe UI", sans-serif;
         line-height: 1.6;
@@ -143,7 +150,7 @@
 
       .meta {
         font-size: 14px;
-        color: #4d5562;
+        color: var(--muted);
       }
 
       .hero__art {
@@ -187,7 +194,7 @@
       }
 
       .card {
-        background: #ffffff;
+        background: var(--card);
         border-radius: 20px;
         padding: 22px;
         box-shadow: var(--shadow);
@@ -223,8 +230,8 @@
       }
 
       pre {
-        background: #121821;
-        color: #f8f2e6;
+        background: var(--code-bg);
+        color: var(--code-ink);
         padding: 16px;
         border-radius: 16px;
         overflow-x: auto;
@@ -232,8 +239,8 @@
       }
 
       .note {
-        background: rgba(47, 111, 126, 0.1);
-        border-left: 4px solid var(--accent);
+        background: var(--note-bg);
+        border-left: 4px solid var(--note-border);
         padding: 16px;
         border-radius: 12px;
         margin-top: 18px;
@@ -241,7 +248,7 @@
 
       footer {
         padding: 32px clamp(24px, 6vw, 96px) 48px;
-        color: #5a616d;
+        color: var(--muted);
         font-size: 14px;
       }
 
@@ -252,6 +259,45 @@
 
         .ibis-card {
           padding: 18px;
+        }
+      }
+
+      @media (prefers-color-scheme: dark) {
+        :root {
+          color-scheme: dark;
+          --paper: #0f141b;
+          --ink: #edf1f6;
+          --sun: #e3c074;
+          --moon: #99b2d6;
+          --night: #0b1118;
+          --accent: #7cc3d4;
+          --rose: #d49c89;
+          --shadow: 0 24px 60px rgba(0, 0, 0, 0.45);
+          --card: #151d27;
+          --muted: #9aa6b2;
+          --surface: #0a1016;
+          --code-bg: #0a0f16;
+          --code-ink: #e8ecf2;
+          --note-bg: rgba(124, 195, 212, 0.12);
+          --note-border: #7cc3d4;
+        }
+
+        body {
+          background: radial-gradient(circle at 15% 15%, #1a2430, var(--paper) 45%, var(--surface) 100%);
+        }
+
+        .ibis-card {
+          background: rgba(15, 20, 27, 0.75);
+          border: 1px solid rgba(255, 255, 255, 0.08);
+        }
+
+        .card {
+          border: 1px solid rgba(255, 255, 255, 0.08);
+        }
+
+        .button {
+          background: var(--accent);
+          color: #0b1118;
         }
       }
     </style>
