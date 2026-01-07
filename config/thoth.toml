@@ -1,0 +1,88 @@
+[thoth]
+db_path = "data/thoth.db"
+profile_dir = "data/profiles"
+headless = false
+slow_mo_ms = 250
+loop_delay_seconds = 20
+
+[scrape]
+recent_message_limit = 200
+idle_cycles_before_backfill = 6
+backfill_scroll_steps = 4
+scroll_delay_ms = 1500
+scroll_pixels = 1200
+
+[[sources]]
+name = "discord"
+type = "discord"
+base_url = "https://discord.com/channels/@me"
+enabled = true
+
+  [sources.selectors]
+  scroll_container = "main"
+  message_item = "[id^='chat-messages-'], li[id^='chat-messages-']"
+  message_id_attr = "id"
+  author = "h3 span"
+  content = "div[class*='markup']"
+  timestamp = "time"
+  timestamp_attr = "datetime"
+  edited = "span[class*='edited']"
+  reply_context = "div[class*='repliedMessage']"
+  reaction_item = "div[role='button'][class*='reaction']"
+  reaction_emoji = "img, span"
+  reaction_count = "span"
+
+  [[sources.channels]]
+  name = "discord-general"
+  url = "https://discord.com/channels/YOUR_SERVER_ID/YOUR_CHANNEL_ID"
+  enabled = false
+
+[[sources]]
+name = "slack"
+type = "slack"
+base_url = "https://app.slack.com/client"
+enabled = true
+
+  [sources.selectors]
+  scroll_container = "div[role='list']"
+  message_item = "div.c-virtual_list__item"
+  message_id_attr = "data-item-key"
+  author = "span.c-message__sender"
+  content = "span.c-message__body, div.c-message__body"
+  timestamp = "a.c-timestamp"
+  timestamp_attr = "data-ts"
+  edited = "span.c-message__edited"
+  reply_context = "div.c-message__reply_bar"
+  reaction_item = "button.c-reaction"
+  reaction_emoji = "img, span"
+  reaction_count = "span.c-reaction__count"
+
+  [[sources.channels]]
+  name = "slack-general"
+  url = "https://app.slack.com/client/YOUR_WORKSPACE_ID/YOUR_CHANNEL_ID"
+  enabled = false
+
+[[sources]]
+name = "telegram"
+type = "telegram"
+base_url = "https://web.telegram.org/"
+enabled = true
+
+  [sources.selectors]
+  scroll_container = "div[role='list']"
+  message_item = "div.message"
+  message_id_attr = "data-id"
+  author = "span.message-author"
+  content = "div.message-text"
+  timestamp = "time"
+  timestamp_attr = "datetime"
+  edited = "span.message-edited"
+  reply_context = "div.reply"
+  reaction_item = "div.reaction"
+  reaction_emoji = "img, span"
+  reaction_count = "span"
+
+  [[sources.channels]]
+  name = "telegram-general"
+  url = "https://web.telegram.org/k/#@YOUR_CHANNEL"
+  enabled = false
