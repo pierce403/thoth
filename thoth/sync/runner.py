@@ -7,6 +7,7 @@ import pathlib
 import re
 import sys
 import os
+import time
 from typing import Any, Dict, Optional
 from urllib.parse import urljoin
 
@@ -122,10 +123,28 @@ class GenericScraper:
         login_selector = LOGIN_SELECTORS.get(self.source_type)
         if not login_selector:
             return
-        while page.query_selector(login_selector):
-            LOGGER.warning("Login required for %s. Please authenticate in the browser.", self.source_type)
-            input("Press Enter after completing login to re-check...")
-            page.wait_for_timeout(1000)
+        if not sys.stdin.isatty():
+            LOGGER.warning(
+                "Login required for %s. Waiting for user login in the browser.",
+                self.source_type,
+            )
+            last_log = time.monotonic()
+            while page.query_selector(login_selector):
+                page.wait_for_timeout(2000)
+                if time.monotonic() - last_log > 30:
+                    LOGGER.warning(
+                        "Still waiting on %s login. Please authenticate in the browser.",
+                        self.source_type,
+                    )
+                    last_log = time.monotonic()
+        else:
+            while page.query_selector(login_selector):
+                LOGGER.warning(
+                    "Login required for %s. Please authenticate in the browser.",
+                    self.source_type,
+                )
+                input("Press Enter after completing login to re-check...")
+                page.wait_for_timeout(1000)
         ready_selector = self.selectors.get("message_item")
         if ready_selector:
             try:
@@ -374,7 +393,6 @@ def prepare_session(
             "Login required for: %s. Please authenticate in the browser tabs.",
             ", ".join(login_needed),
         )
-        input("Press Enter after completing login in all tabs...")
 
     for source in enabled_sources:
         if source.name in login_needed:
@@ -383,6 +401,17 @@ def prepare_session(
             scrapers_by_source[source.name].wait_for_login(page)
 
     return conn, context, enabled_sources, pages_by_source, scrapers_by_source
+
+
+def _handle_prepare_error(exc: Exception) -> None:
+    message = str(exc)
+    if "missing dependencies" in message.lower() or "Host system is missing dependencies" in message:
+        LOGGER.error(
+            "Playwright system dependencies are missing. Run: sudo playwright install-deps "
+            "or install required OS packages (e.g. libxml2), then retry."
+        )
+        raise SystemExit(2) from exc
+    raise
 
 
 def run_cycle(
@@ -615,9 +644,12 @@ def run_cycle(
 def run_once(config_path: Optional[str] = None) -> None:
     config = config_module.load_config(config_path)
     with sync_playwright() as playwright:
-        conn, context, enabled_sources, pages_by_source, scrapers_by_source = prepare_session(
-            config, playwright
-        )
+        try:
+            conn, context, enabled_sources, pages_by_source, scrapers_by_source = prepare_session(
+                config, playwright
+            )
+        except Exception as exc:  # noqa: BLE001
+            _handle_prepare_error(exc)
         run_cycle(conn, config, enabled_sources, pages_by_source, scrapers_by_source)
         context.close()
 
@@ -625,9 +657,12 @@ def run_once(config_path: Optional[str] = None) -> None:
 def run_forever(config_path: Optional[str] = None) -> None:
     config = config_module.load_config(config_path)
     with sync_playwright() as playwright:
-        conn, context, enabled_sources, pages_by_source, scrapers_by_source = prepare_session(
-            config, playwright
-        )
+        try:
+            conn, context, enabled_sources, pages_by_source, scrapers_by_source = prepare_session(
+                config, playwright
+            )
+        except Exception as exc:  # noqa: BLE001
+            _handle_prepare_error(exc)
         parent_pid_env = os.getenv("THOTH_PARENT_PID")
         parent_pid = int(parent_pid_env) if parent_pid_env and parent_pid_env.isdigit() else None
         context_closed = {"closed": False}
