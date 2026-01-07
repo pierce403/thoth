@@ -9,6 +9,27 @@ CONFIG_PATH=""
 PID_FILE="logs/sync.pid"
 
 ARGS=("$@")
+for arg in "${ARGS[@]}"; do
+  if [ "$arg" = "--stop" ]; then
+    if [ ! -f "$PID_FILE" ]; then
+      echo "No sync PID file found." >&2
+      exit 1
+    fi
+    EXISTING_PID="$(cat "$PID_FILE" 2>/dev/null || true)"
+    if [ -z "$EXISTING_PID" ]; then
+      echo "No PID found in $PID_FILE." >&2
+      exit 1
+    fi
+    if kill -0 "$EXISTING_PID" >/dev/null 2>&1; then
+      echo "Stopping sync.sh (pid $EXISTING_PID)..." >&2
+      kill -INT "$EXISTING_PID" >/dev/null 2>&1 || true
+      exit 0
+    fi
+    echo "PID $EXISTING_PID not running; removing stale PID file." >&2
+    rm -f "$PID_FILE"
+    exit 1
+  fi
+done
 for ((i=0; i<${#ARGS[@]}; i++)); do
   if [ "${ARGS[$i]}" = "--config" ] && [ $((i + 1)) -lt ${#ARGS[@]} ]; then
     CONFIG_PATH="${ARGS[$i+1]}"
