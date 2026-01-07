@@ -180,6 +180,11 @@ def sync_channel(
     recent_data = scraper.collect_messages(page)
     recent_limit = int(scrape_config.get("recent_message_limit", 200))
     recent_messages = recent_data["messages"][-recent_limit:]
+    if not recent_messages:
+        LOGGER.warning(
+            "No messages extracted for %s. Check login status and selectors.",
+            label,
+        )
     recent_results = ingest_messages(conn, source_id, channel_id, recent_messages)
     if recent_results["inserted"] == 0:
         idle_cycles += 1
@@ -255,6 +260,8 @@ def prepare_session(
     )
 
     enabled_sources = [source for source in config.sources if source.enabled]
+    if not enabled_sources:
+        LOGGER.warning("No enabled sources found. Enable at least one source in config.")
     pages_by_source: Dict[str, Page] = {}
     scrapers_by_source: Dict[str, GenericScraper] = {}
 
@@ -293,13 +300,19 @@ def run_cycle(
     scrapers_by_source: Dict[str, GenericScraper],
 ) -> None:
     for source in enabled_sources:
+        enabled_channels = [channel for channel in source.channels if channel.enabled]
+        if not enabled_channels:
+            LOGGER.warning(
+                "No enabled channels for source %s. Enable channels in config to sync.",
+                source.name,
+            )
+            continue
+
         source_id = db.upsert_source(conn, source.name, source.type, source.base_url)
         scraper = scrapers_by_source[source.name]
         page = pages_by_source[source.name]
 
-        for channel in source.channels:
-            if not channel.enabled:
-                continue
+        for channel in enabled_channels:
             channel_external_id = channel.url
             channel_id = db.upsert_channel(
                 conn,
