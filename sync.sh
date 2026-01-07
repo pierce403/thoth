@@ -67,6 +67,7 @@ hash_files() {
 while true; do
   "$PYTHON_BIN" -m thoth.sync "$@" &
   SYNC_PID=$!
+  RESTART_REASON="exit"
 
   if [ "$RESTART_ON_CHANGE" = "1" ]; then
     LAST_HASH="$(hash_files)"
@@ -77,11 +78,23 @@ while true; do
         echo "Code or config changed; restarting sync..." >&2
         kill -INT "$SYNC_PID" >/dev/null 2>&1 || true
         wait "$SYNC_PID" || true
+        RESTART_REASON="reload"
         break
       fi
     done
   else
     wait "$SYNC_PID" || true
+  fi
+
+  wait "$SYNC_PID" >/dev/null 2>&1 || true
+  EXIT_CODE=$?
+  if [ "$EXIT_CODE" -eq 3 ]; then
+    echo "Browser closed; stopping sync loop." >&2
+    exit 0
+  fi
+  if [ "$RESTART_REASON" = "reload" ]; then
+    sleep "$LOOP_DELAY"
+    continue
   fi
 
   sleep "$LOOP_DELAY"

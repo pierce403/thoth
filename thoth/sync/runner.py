@@ -5,6 +5,7 @@ import logging
 import hashlib
 import pathlib
 import re
+import sys
 from typing import Any, Dict, Optional
 from urllib.parse import urljoin
 
@@ -30,6 +31,13 @@ DISCORD_BASE = "https://discord.com"
 
 def _normalize_discord_url(href: str) -> str:
     return urljoin(DISCORD_BASE, href)
+
+
+def _normalize_url(url: str) -> str:
+    if not url:
+        return ""
+    base = url.split("?", 1)[0].rstrip("/")
+    return base
 
 
 def _extract_discord_ids(href: str) -> Optional[tuple[str, str]]:
@@ -125,8 +133,9 @@ class GenericScraper:
                 LOGGER.info("Continuing without ready selector for %s.", self.source_type)
 
     def open_channel(self, page: Page, url: str) -> None:
-        page.goto(url, wait_until="load")
-        page.wait_for_timeout(1000)
+        if _normalize_url(page.url) != _normalize_url(url):
+            page.goto(url, wait_until="load")
+            page.wait_for_timeout(1000)
         login_selector = LOGIN_SELECTORS.get(self.source_type)
         if login_selector and page.query_selector(login_selector):
             self.wait_for_login(page)
@@ -433,6 +442,51 @@ def run_cycle(
                 )
                 continue
 
+            existing = conn.execute(
+                "SELECT id, name, url FROM channels WHERE source_id = ? ORDER BY id",
+                (source_id,),
+            ).fetchall()
+            if existing:
+                LOGGER.info(
+                    "Using %d previously discovered Discord channels for %s.",
+                    len(existing),
+                    source.name,
+                )
+                for row in existing:
+                    state = db.get_sync_state(conn, source_id, row["id"])
+                    mode = state["mode"] or "recent"
+                    reason = "read recent activity" if mode == "recent" else "backfill backlog"
+
+                    def make_sync_action(
+                        page=page,
+                        scraper=scraper,
+                        source_id=source_id,
+                        channel_id=row["id"],
+                        channel_url=row["url"],
+                        label=f"{source.name}:{row['name']}",
+                    ):
+                        return sync_channel(
+                            page,
+                            scraper,
+                            conn,
+                            source_id,
+                            channel_id,
+                            channel_url,
+                            config.scrape,
+                            label,
+                        )
+
+                    queue.add(
+                        task_module.Task(
+                            name="sync_channel",
+                            source=source.name,
+                            channel=row["name"],
+                            reason=reason,
+                            action=make_sync_action,
+                        )
+                    )
+                continue
+
             LOGGER.warning(
                 "No enabled channels for source %s. Auto-discovering Discord channels.",
                 source.name,
@@ -573,9 +627,28 @@ def run_forever(config_path: Optional[str] = None) -> None:
         conn, context, enabled_sources, pages_by_source, scrapers_by_source = prepare_session(
             config, playwright
         )
+        context_closed = {"closed": False}
+
+        def _mark_closed() -> None:
+            context_closed["closed"] = True
+
+        try:
+            context.on("close", lambda _: _mark_closed())
+        except Exception:  # noqa: BLE001
+            pass
         loop_delay = max(1, int(config.loop_delay_seconds))
         while True:
-            run_cycle(conn, config, enabled_sources, pages_by_source, scrapers_by_source)
+            if context_closed["closed"]:
+                LOGGER.error("Browser closed; stopping sync.")
+                context.close()
+                raise SystemExit(3)
+            try:
+                run_cycle(conn, config, enabled_sources, pages_by_source, scrapers_by_source)
+            except Exception as exc:  # noqa: BLE001
+                if context_closed["closed"] or "Target closed" in str(exc):
+                    LOGGER.error("Browser closed; stopping sync.")
+                    raise SystemExit(3) from exc
+                LOGGER.exception("Sync cycle failed: %s", exc)
             LOGGER.info("Sync cycle complete. Sleeping %ds.", loop_delay)
             try:
                 import time
