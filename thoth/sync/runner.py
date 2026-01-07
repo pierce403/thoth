@@ -95,6 +95,12 @@ class GenericScraper:
         self.source_type = source_type
         self.selectors = selectors
 
+    def login_screen_visible(self, page: Page) -> bool:
+        login_selector = LOGIN_SELECTORS.get(self.source_type)
+        if not login_selector:
+            return False
+        return bool(page.query_selector(login_selector))
+
     def login_required(self, page: Page, base_url: str) -> bool:
         login_selector = LOGIN_SELECTORS.get(self.source_type)
         if not login_selector:
@@ -384,16 +390,16 @@ def run_cycle(
         scraper = scrapers_by_source[source.name]
         page = pages_by_source[source.name]
 
-        def notification_action(page=page, scraper=scraper, base_url=source.base_url):
-            needs_login = scraper.login_required(page, base_url)
+        def notification_action(page=page, scraper=scraper):
+            needs_login = scraper.login_screen_visible(page)
             if needs_login:
                 scraper.wait_for_login(page)
                 return {"status": "login", "details": "login required"}
             page.wait_for_timeout(500)
             return {"status": "ok", "details": "checked notifications"}
 
-        def server_check_action(page=page, scraper=scraper, base_url=source.base_url):
-            needs_login = scraper.login_required(page, base_url)
+        def server_check_action(page=page, scraper=scraper):
+            needs_login = scraper.login_screen_visible(page)
             if needs_login:
                 scraper.wait_for_login(page)
                 return {"status": "login", "details": "login required"}
