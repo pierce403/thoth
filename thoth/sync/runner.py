@@ -54,6 +54,9 @@ class GenericScraper:
     def open_channel(self, page: Page, url: str) -> None:
         page.goto(url, wait_until="load")
         page.wait_for_timeout(1000)
+        login_selector = LOGIN_SELECTORS.get(self.source_type)
+        if login_selector and page.query_selector(login_selector):
+            self.wait_for_login(page)
 
     def collect_messages(self, page: Page) -> Dict[str, Any]:
         raw_messages = extract_messages(page, self.selectors)
@@ -155,6 +158,7 @@ def sync_channel(
     channel_id: int,
     channel_url: str,
     scrape_config: Dict[str, Any],
+    label: str,
 ) -> None:
     state = db.get_sync_state(conn, source_id, channel_id)
     mode = state["mode"] or "recent"
@@ -176,8 +180,8 @@ def sync_channel(
     recent_data = scraper.collect_messages(page)
     recent_limit = int(scrape_config.get("recent_message_limit", 200))
     recent_messages = recent_data["messages"][-recent_limit:]
-    results = ingest_messages(conn, source_id, channel_id, recent_messages)
-    if results["inserted"] == 0:
+    recent_results = ingest_messages(conn, source_id, channel_id, recent_messages)
+    if recent_results["inserted"] == 0:
         idle_cycles += 1
     else:
         idle_cycles = 0
@@ -196,14 +200,21 @@ def sync_channel(
         pixels = int(scrape_config.get("scroll_pixels", 1200))
         delay = int(scrape_config.get("scroll_delay_ms", 1500))
         backfill_timestamps = []
+        backfill_inserted = 0
+        backfill_edited = 0
         for _ in range(steps):
             scroll_up(page, scroll_container, pixels)
             page.wait_for_timeout(delay)
             data = scraper.collect_messages(page)
-            ingest_messages(conn, source_id, channel_id, data["messages"])
+            results = ingest_messages(conn, source_id, channel_id, data["messages"])
+            backfill_inserted += results["inserted"]
+            backfill_edited += results["edited"]
             backfill_timestamps.extend([msg.created_at for msg in data["messages"] if msg.created_at])
         if backfill_timestamps:
             oldest_seen_at = min(backfill_timestamps)
+    else:
+        backfill_inserted = 0
+        backfill_edited = 0
 
     db.update_sync_state(
         conn,
@@ -215,95 +226,160 @@ def sync_channel(
         cursor={"mode": mode, "idle_cycles": idle_cycles},
         idle_cycles=idle_cycles,
     )
+    LOGGER.info(
+        "Sync success %s mode=%s inserted=%d edited=%d backfill_inserted=%d backfill_edited=%d",
+        label,
+        mode,
+        recent_results["inserted"],
+        recent_results["edited"],
+        backfill_inserted,
+        backfill_edited,
+    )
+
+
+def prepare_session(
+    config: config_module.ThothConfig,
+    playwright,
+) -> tuple[sqlite3.Connection, object, list, Dict[str, Page], Dict[str, GenericScraper]]:
+    conn = db.connect(config.db_path)
+    db.ensure_schema(conn)
+
+    if config.headless:
+        LOGGER.warning("Headless mode requested; forcing headful browser for visibility.")
+    profile_dir = pathlib.Path(config.profile_dir) / "default"
+    profile_dir.mkdir(parents=True, exist_ok=True)
+    context = playwright.chromium.launch_persistent_context(
+        user_data_dir=str(profile_dir),
+        headless=False,
+        slow_mo=config.slow_mo_ms,
+    )
+
+    enabled_sources = [source for source in config.sources if source.enabled]
+    pages_by_source: Dict[str, Page] = {}
+    scrapers_by_source: Dict[str, GenericScraper] = {}
+
+    existing_pages = list(context.pages)
+    login_needed = []
+    for index, source in enumerate(enabled_sources):
+        page = existing_pages[index] if index < len(existing_pages) else context.new_page()
+        pages_by_source[source.name] = page
+        scraper = GenericScraper(source.type, source.selectors)
+        scrapers_by_source[source.name] = scraper
+        page.bring_to_front()
+        if scraper.login_required(page, source.base_url):
+            login_needed.append(source.name)
+
+    if login_needed:
+        LOGGER.warning(
+            "Login required for: %s. Please authenticate in the browser tabs.",
+            ", ".join(login_needed),
+        )
+        input("Press Enter after completing login in all tabs...")
+
+    for source in enabled_sources:
+        if source.name in login_needed:
+            page = pages_by_source[source.name]
+            page.bring_to_front()
+            scrapers_by_source[source.name].wait_for_login(page)
+
+    return conn, context, enabled_sources, pages_by_source, scrapers_by_source
+
+
+def run_cycle(
+    conn: sqlite3.Connection,
+    config: config_module.ThothConfig,
+    enabled_sources,
+    pages_by_source: Dict[str, Page],
+    scrapers_by_source: Dict[str, GenericScraper],
+) -> None:
+    for source in enabled_sources:
+        source_id = db.upsert_source(conn, source.name, source.type, source.base_url)
+        scraper = scrapers_by_source[source.name]
+        page = pages_by_source[source.name]
+
+        for channel in source.channels:
+            if not channel.enabled:
+                continue
+            channel_external_id = channel.url
+            channel_id = db.upsert_channel(
+                conn,
+                source_id=source_id,
+                name=channel.name,
+                external_id=channel_external_id,
+                url=channel.url,
+            )
+            LOGGER.info("Syncing %s:%s", source.name, channel.name)
+            try:
+                sync_channel(
+                    page,
+                    scraper,
+                    conn,
+                    source_id,
+                    channel_id,
+                    channel.url,
+                    config.scrape,
+                    f"{source.name}:{channel.name}",
+                )
+            except Exception as exc:  # noqa: BLE001
+                LOGGER.exception("Sync failed for %s:%s: %s", source.name, channel.name, exc)
 
 
 def run_once(config_path: Optional[str] = None) -> None:
     config = config_module.load_config(config_path)
-    conn = db.connect(config.db_path)
-    db.ensure_schema(conn)
-
     with sync_playwright() as playwright:
-        if config.headless:
-            LOGGER.warning("Headless mode requested; forcing headful browser for visibility.")
-        profile_dir = pathlib.Path(config.profile_dir) / "default"
-        profile_dir.mkdir(parents=True, exist_ok=True)
-        context = playwright.chromium.launch_persistent_context(
-            user_data_dir=str(profile_dir),
-            headless=False,
-            slow_mo=config.slow_mo_ms,
+        conn, context, enabled_sources, pages_by_source, scrapers_by_source = prepare_session(
+            config, playwright
         )
+        run_cycle(conn, config, enabled_sources, pages_by_source, scrapers_by_source)
+        context.close()
 
-        enabled_sources = [source for source in config.sources if source.enabled]
-        pages_by_source: Dict[str, Page] = {}
-        scrapers_by_source: Dict[str, GenericScraper] = {}
 
-        existing_pages = list(context.pages)
-        login_needed = []
-        for index, source in enumerate(enabled_sources):
-            page = existing_pages[index] if index < len(existing_pages) else context.new_page()
-            pages_by_source[source.name] = page
-            scraper = GenericScraper(source.type, source.selectors)
-            scrapers_by_source[source.name] = scraper
-            page.bring_to_front()
-            if scraper.login_required(page, source.base_url):
-                login_needed.append(source.name)
+def run_forever(config_path: Optional[str] = None) -> None:
+    config = config_module.load_config(config_path)
+    with sync_playwright() as playwright:
+        conn, context, enabled_sources, pages_by_source, scrapers_by_source = prepare_session(
+            config, playwright
+        )
+        loop_delay = max(1, int(config.loop_delay_seconds))
+        while True:
+            run_cycle(conn, config, enabled_sources, pages_by_source, scrapers_by_source)
+            LOGGER.info("Sync cycle complete. Sleeping %ds.", loop_delay)
+            try:
+                import time
 
-        if login_needed:
-            LOGGER.warning(
-                "Login required for: %s. Please authenticate in the browser tabs.",
-                ", ".join(login_needed),
-            )
-            input("Press Enter after completing login in all tabs...")
-
-        for source in enabled_sources:
-            if source.name in login_needed:
-                page = pages_by_source[source.name]
-                page.bring_to_front()
-                scrapers_by_source[source.name].wait_for_login(page)
-
-        for source in enabled_sources:
-            source_id = db.upsert_source(conn, source.name, source.type, source.base_url)
-            scraper = scrapers_by_source[source.name]
-            page = pages_by_source[source.name]
-
-            for channel in source.channels:
-                if not channel.enabled:
-                    continue
-                channel_external_id = channel.url
-                channel_id = db.upsert_channel(
-                    conn,
-                    source_id=source_id,
-                    name=channel.name,
-                    external_id=channel_external_id,
-                    url=channel.url,
-                )
-                LOGGER.info("Syncing %s:%s", source.name, channel.name)
-                try:
-                    sync_channel(
-                        page,
-                        scraper,
-                        conn,
-                        source_id,
-                        channel_id,
-                        channel.url,
-                        config.scrape,
-                    )
-                except Exception as exc:  # noqa: BLE001
-                    LOGGER.exception("Sync failed for %s:%s: %s", source.name, channel.name, exc)
-
+                time.sleep(loop_delay)
+            except KeyboardInterrupt:
+                LOGGER.info("Sync loop interrupted; shutting down.")
+                break
         context.close()
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Thoth sync runner")
     parser.add_argument("--config", dest="config", default=None)
+    parser.add_argument("--once", action="store_true", help="Run a single sync pass then exit")
     return parser
 
 
+def setup_logging() -> None:
+    log_dir = pathlib.Path("logs")
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_path = log_dir / "sync.log"
+    logging.basicConfig(
+        level=logging.INFO,
+        format="[%(asctime)s] %(levelname)s %(message)s",
+        handlers=[logging.StreamHandler(), logging.FileHandler(log_path, encoding="utf-8")],
+        force=True,
+    )
+
+
 def main() -> None:
-    logging.basicConfig(level=logging.INFO, format="[%(asctime)s] %(levelname)s %(message)s")
+    setup_logging()
     args = build_arg_parser().parse_args()
-    run_once(args.config)
+    if args.once:
+        run_once(args.config)
+    else:
+        run_forever(args.config)
 
 
 if __name__ == "__main__":

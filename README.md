@@ -27,7 +27,7 @@ cp config/thoth.toml config/thoth.local.toml
 
 Update `config/thoth.local.toml` with the channels you want to monitor. Selectors are intentionally exposed so you can tune them if the DOM changes.
 
-3) Run the sync loop (browser will open visibly):
+3) Run the sync loop (browser will open visibly and stay open):
 
 ```bash
 ./sync.sh --config config/thoth.local.toml
@@ -45,6 +45,12 @@ If you don't have XMTP configured yet, you can run the agent in local stdio mode
 
 ```bash
 ./agent.sh --config config/thoth.local.toml --stdio
+```
+
+To run a single sync pass and exit:
+
+```bash
+python -m thoth.sync --config config/thoth.local.toml --once
 ```
 
 ## Architecture

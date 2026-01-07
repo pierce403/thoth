@@ -23,6 +23,27 @@ Project: Thoth - an agentic assistant that monitors public community chats and s
 - Prefer selectors defined in config; avoid hardcoding per-platform DOM unless required.
 - Record edits, reactions, and threading in universal tables where possible.
 
+## Self-improvement protocol
+Keep this file current with anything learned while working in the repo. Add/update:
+- Commands that work to build/run/test.
+- Common pitfalls, missing deps, or platform quirks.
+- Selector tips or known DOM changes per source.
+- Any conventions discovered while editing.
+- Process rule: always commit and push after every edit.
+
+## Commands (verified)
+- Create venv + install deps: `python3 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt`
+- Install Playwright browsers: `python -m playwright install`
+- Run one sync pass: `python -m thoth.sync --config config/thoth.toml`
+- Run sync loop: `./sync.sh --config config/thoth.toml`
+- Run agent (stdio): `./agent.sh --config config/thoth.toml --stdio`
+
+## Known pitfalls / notes
+- Playwright may require system deps; if the browser fails to launch, run `sudo playwright install-deps`.
+- Browser is forced headful; config `headless=true` is ignored with a warning.
+- Slack/Telegram sources are enabled, but sample channels are disabled until you fill in URLs.
+- Persistent browser profile is stored under `data/profiles/default`.
+
 ## Codex skill usage (from local instructions)
 These are copied from the local AGENTS instructions so future agents follow the same rules.
 
