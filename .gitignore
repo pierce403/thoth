@@ -6,7 +6,8 @@ __pycache__/
 *.sqlite
 *.db
 *.log
-/data/
+/data/*
+!/data/README.md
 /playwright/.cache/
 /data/profiles/
 /logs/*
