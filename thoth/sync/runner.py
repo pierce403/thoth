@@ -50,8 +50,12 @@ def _extract_discord_ids(href: str) -> Optional[tuple[str, str]]:
 
 
 def discover_discord_channels(page: Page, base_url: str) -> list[dict]:
-    page.goto(base_url, wait_until="load")
-    page.wait_for_timeout(1000)
+    page.goto(base_url, wait_until="domcontentloaded")
+    try:
+        page.wait_for_selector("nav[aria-label='Servers']", timeout=15000)
+    except Exception:  # noqa: BLE001
+        LOGGER.warning("Discord discovery: server list not found on %s", page.url)
+    page.wait_for_timeout(1500)
     raw_links = page.evaluate(
         """
         () => Array.from(document.querySelectorAll("a[href*='/channels/']"))
@@ -62,17 +66,23 @@ def discover_discord_channels(page: Page, base_url: str) -> list[dict]:
           }))
         """
     )
+    LOGGER.info("Discord discovery: %d channel links visible on %s", len(raw_links), page.url)
     guild_ids: set[str] = set()
     for link in raw_links:
         ids = _extract_discord_ids(link.get("href", ""))
         if ids:
             guild_ids.add(ids[0])
+    LOGGER.info("Discord discovery: %d unique guild IDs", len(guild_ids))
 
     channels: list[dict] = []
     seen_urls: set[str] = set()
     for guild_id in sorted(guild_ids):
         guild_url = f"{DISCORD_BASE}/channels/{guild_id}"
-        page.goto(guild_url, wait_until="load")
+        page.goto(guild_url, wait_until="domcontentloaded")
+        try:
+            page.wait_for_selector(f"a[href*='/channels/{guild_id}/']", timeout=10000)
+        except Exception:  # noqa: BLE001
+            LOGGER.warning("Discord discovery: no channel links found for %s", guild_url)
         page.wait_for_timeout(1200)
         channel_links = page.evaluate(
             """
@@ -83,6 +93,11 @@ def discover_discord_channels(page: Page, base_url: str) -> list[dict]:
                 aria: el.getAttribute('aria-label') || ''
               }))
             """,
+            guild_id,
+        )
+        LOGGER.info(
+            "Discord discovery: %d channel links found for guild %s",
+            len(channel_links),
             guild_id,
         )
         for link in channel_links:
