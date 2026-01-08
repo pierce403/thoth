@@ -42,6 +42,10 @@ def _normalize_url(url: str) -> str:
     return base
 
 
+def _clean_label(value: str) -> str:
+    return " ".join((value or "").split()).strip()
+
+
 def _extract_discord_ids(href: str) -> Optional[tuple[str, str]]:
     match = re.search(r"/channels/([^/]+)/([^/]+)", href)
     if not match:
@@ -50,40 +54,31 @@ def _extract_discord_ids(href: str) -> Optional[tuple[str, str]]:
 
 
 def discover_discord_channels(page: Page, base_url: str) -> list[dict]:
-    page.goto(base_url, wait_until="domcontentloaded")
+    if "discord.com/channels" not in page.url:
+        page.goto(base_url, wait_until="domcontentloaded")
     try:
         page.wait_for_selector("nav[aria-label='Servers']", timeout=15000)
     except Exception:  # noqa: BLE001
         LOGGER.warning("Discord discovery: server list not found on %s", page.url)
     page.wait_for_timeout(1500)
-    raw_links = page.evaluate(
+
+    server_links = page.evaluate(
         """
-        () => Array.from(document.querySelectorAll("a[href*='/channels/']"))
-          .map(el => ({
-            href: el.getAttribute('href') || '',
-            text: (el.innerText || '').trim(),
-            aria: el.getAttribute('aria-label') || ''
-          }))
+        () => Array.from(document.querySelectorAll("nav[aria-label='Servers'] a[href*='/channels/']"))
+          .map(el => el.getAttribute('href') || '')
         """
     )
-    LOGGER.info("Discord discovery: %d channel links visible on %s", len(raw_links), page.url)
     guild_ids: set[str] = set()
-    for link in raw_links:
-        ids = _extract_discord_ids(link.get("href", ""))
+    for href in server_links:
+        ids = _extract_discord_ids(href)
         if ids:
             guild_ids.add(ids[0])
-    LOGGER.info("Discord discovery: %d unique guild IDs", len(guild_ids))
+    LOGGER.info("Discord discovery: %d server IDs from sidebar", len(guild_ids))
 
     channels: list[dict] = []
     seen_urls: set[str] = set()
-    for guild_id in sorted(guild_ids):
-        guild_url = f"{DISCORD_BASE}/channels/{guild_id}"
-        page.goto(guild_url, wait_until="domcontentloaded")
-        try:
-            page.wait_for_selector(f"a[href*='/channels/{guild_id}/']", timeout=10000)
-        except Exception:  # noqa: BLE001
-            LOGGER.warning("Discord discovery: no channel links found for %s", guild_url)
-        page.wait_for_timeout(1200)
+
+    def collect_channels_for_guild(guild_id: str) -> None:
         channel_links = page.evaluate(
             """
             (guildId) => Array.from(document.querySelectorAll(`a[href*='/channels/${guildId}/']`))
@@ -109,8 +104,66 @@ def discover_discord_channels(page: Page, base_url: str) -> list[dict]:
             if url in seen_urls:
                 continue
             seen_urls.add(url)
-            name = link.get("text") or link.get("aria") or f"channel-{ids[1]}"
-            channels.append({"name": name, "url": url, "guild_id": ids[0], "channel_id": ids[1]})
+            name = _clean_label(link.get("text") or link.get("aria") or f"channel-{ids[1]}")
+            channels.append(
+                {"name": name, "url": url, "guild_id": ids[0], "channel_id": ids[1]}
+            )
+
+    # Collect DMs from @me if visible
+    try:
+        home_link = page.locator("a[href='/channels/@me']")
+        if home_link.count() > 0:
+            home_link.first.click()
+            page.wait_for_timeout(1200)
+            collect_channels_for_guild("@me")
+    except Exception:  # noqa: BLE001
+        pass
+
+    for guild_id in sorted(guild_ids):
+        if guild_id == "@me":
+            continue
+        try:
+            selector = f"nav[aria-label='Servers'] a[href*='/channels/{guild_id}']"
+            locator = page.locator(selector)
+            if locator.count() > 0:
+                locator.first.click()
+                page.wait_for_timeout(1200)
+            else:
+                page.goto(f"{DISCORD_BASE}/channels/{guild_id}", wait_until="domcontentloaded")
+                page.wait_for_timeout(1200)
+            try:
+                page.wait_for_selector(f"a[href*='/channels/{guild_id}/']", timeout=10000)
+            except Exception:  # noqa: BLE001
+                LOGGER.warning("Discord discovery: no channel links found for %s", guild_id)
+            collect_channels_for_guild(guild_id)
+        except Exception:  # noqa: BLE001
+            LOGGER.warning("Discord discovery: failed to open guild %s", guild_id)
+            continue
+    if not channels:
+        raw_links = page.evaluate(
+            """
+            () => Array.from(document.querySelectorAll("a[href*='/channels/']"))
+              .map(el => ({
+                href: el.getAttribute('href') || '',
+                text: (el.innerText || '').trim(),
+                aria: el.getAttribute('aria-label') || ''
+              }))
+            """
+        )
+        LOGGER.info("Discord discovery fallback: %d channel links visible", len(raw_links))
+        for link in raw_links:
+            href = link.get("href") or ""
+            ids = _extract_discord_ids(href)
+            if not ids:
+                continue
+            url = _normalize_discord_url(href)
+            if url in seen_urls:
+                continue
+            seen_urls.add(url)
+            name = _clean_label(link.get("text") or link.get("aria") or f"channel-{ids[1]}")
+            channels.append(
+                {"name": name, "url": url, "guild_id": ids[0], "channel_id": ids[1]}
+            )
 
     return channels
 
