@@ -48,6 +48,29 @@ def _is_discord_dm_url(url: str) -> bool:
     return "/channels/@me" in (url or "")
 
 
+def _discord_sidebar_guild_ids(page: Page) -> list[str]:
+    return page.evaluate(
+        """
+        () => {
+          const ids = new Set();
+          const byData = Array.from(document.querySelectorAll("[data-list-item-id^='guildsnav___']"));
+          for (const el of byData) {
+            const raw = el.getAttribute("data-list-item-id") || "";
+            const id = raw.replace("guildsnav___", "");
+            if (/^\\d+$/.test(id)) ids.add(id);
+          }
+          const anchors = Array.from(document.querySelectorAll("nav[aria-label='Servers'] a[href*='/channels/']"));
+          for (const a of anchors) {
+            const href = a.getAttribute("href") || "";
+            const match = href.match(/\\/channels\\/([^/]+)/);
+            if (match && /^\\d+$/.test(match[1])) ids.add(match[1]);
+          }
+          return Array.from(ids);
+        }
+        """
+    )
+
+
 def _normalize_url(url: str) -> str:
     if not url:
         return ""
@@ -78,23 +101,7 @@ def discover_discord_channels(page: Page, base_url: str) -> list[dict]:
         LOGGER.warning("Discord discovery: server list not found on %s", page.url)
     page.wait_for_timeout(1500)
 
-    server_links = page.evaluate(
-        """
-        () => {
-          const nav = document.querySelector("nav[aria-label='Servers']");
-          if (!nav) return [];
-          const anchors = Array.from(nav.querySelectorAll("a"));
-          return anchors
-            .map(el => el.getAttribute('href') || '')
-            .filter(href => href.includes('/channels/'));
-        }
-        """
-    )
-    guild_ids: set[str] = set()
-    for href in server_links:
-        ids = _extract_discord_ids(href)
-        if ids:
-            guild_ids.add(ids[0])
+    guild_ids = set(_discord_sidebar_guild_ids(page))
     LOGGER.info("Discord discovery: %d server IDs from sidebar", len(guild_ids))
 
     channels: list[dict] = []
@@ -145,14 +152,14 @@ def discover_discord_channels(page: Page, base_url: str) -> list[dict]:
         if guild_id == "@me":
             continue
         try:
-            selector = f"nav[aria-label='Servers'] a[href*='/channels/{guild_id}']"
+            selector = f"[data-list-item-id='guildsnav___{guild_id}'], nav[aria-label='Servers'] a[href*='/channels/{guild_id}']"
             locator = page.locator(selector)
             if locator.count() > 0:
                 locator.first.click()
-                page.wait_for_timeout(1200)
+                page.wait_for_timeout(1400)
             else:
                 page.goto(f"{DISCORD_BASE}/channels/{guild_id}", wait_until="domcontentloaded")
-                page.wait_for_timeout(1200)
+                page.wait_for_timeout(1400)
             try:
                 page.wait_for_selector(f"a[href*='/channels/{guild_id}/']", timeout=10000)
             except Exception:  # noqa: BLE001
@@ -168,6 +175,8 @@ def discover_discord_channels(page: Page, base_url: str) -> list[dict]:
         if current_guild:
             LOGGER.info("Discord discovery: fallback using current guild %s", current_guild)
             collect_channels_for_guild(current_guild)
+        else:
+            LOGGER.warning("Discord discovery: no guild IDs found in sidebar or URL.")
     if not channels:
         raw_links = page.evaluate(
             """
