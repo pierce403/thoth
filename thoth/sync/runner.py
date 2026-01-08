@@ -119,17 +119,18 @@ class GenericScraper:
         page.wait_for_timeout(1000)
         return bool(page.query_selector(login_selector))
 
-    def wait_for_login(self, page: Page) -> None:
+    def wait_for_login(self, page: Page, timeout_seconds: int = 60) -> bool:
         login_selector = LOGIN_SELECTORS.get(self.source_type)
         if not login_selector:
-            return
+            return True
         if not sys.stdin.isatty():
             LOGGER.warning(
                 "Login required for %s. Waiting for user login in the browser.",
                 self.source_type,
             )
             last_log = time.monotonic()
-            while page.query_selector(login_selector):
+            deadline = time.monotonic() + timeout_seconds
+            while page.query_selector(login_selector) and time.monotonic() < deadline:
                 page.wait_for_timeout(2000)
                 if time.monotonic() - last_log > 30:
                     LOGGER.warning(
@@ -138,19 +139,24 @@ class GenericScraper:
                     )
                     last_log = time.monotonic()
         else:
-            while page.query_selector(login_selector):
+            deadline = time.monotonic() + timeout_seconds
+            while page.query_selector(login_selector) and time.monotonic() < deadline:
                 LOGGER.warning(
                     "Login required for %s. Please authenticate in the browser.",
                     self.source_type,
                 )
                 input("Press Enter after completing login to re-check...")
                 page.wait_for_timeout(1000)
+        if page.query_selector(login_selector):
+            LOGGER.warning("Login still pending for %s. Skipping for now.", self.source_type)
+            return False
         ready_selector = self.selectors.get("message_item")
         if ready_selector:
             try:
                 page.wait_for_selector(ready_selector, timeout=30000)
             except Exception:  # noqa: BLE001
                 LOGGER.info("Continuing without ready selector for %s.", self.source_type)
+        return True
 
     def open_channel(self, page: Page, url: str) -> None:
         if _normalize_url(page.url) != _normalize_url(url):
@@ -394,12 +400,6 @@ def prepare_session(
             ", ".join(login_needed),
         )
 
-    for source in enabled_sources:
-        if source.name in login_needed:
-            page = pages_by_source[source.name]
-            page.bring_to_front()
-            scrapers_by_source[source.name].wait_for_login(page)
-
     return conn, context, enabled_sources, pages_by_source, scrapers_by_source
 
 
@@ -429,19 +429,33 @@ def run_cycle(
         scraper = scrapers_by_source[source.name]
         page = pages_by_source[source.name]
 
+        if scraper.login_screen_visible(page):
+            LOGGER.warning(
+                "Login pending for source %s. Skipping sync tasks until login completes.",
+                source.name,
+            )
+            queue.add(
+                task_module.Task(
+                    name="login_pending",
+                    source=source.name,
+                    channel=None,
+                    reason="login screen visible; waiting for user authentication",
+                    action=lambda: {"status": "pending", "details": "login screen visible"},
+                )
+            )
+            continue
+
         def notification_action(page=page, scraper=scraper):
             needs_login = scraper.login_screen_visible(page)
             if needs_login:
-                scraper.wait_for_login(page)
-                return {"status": "login", "details": "login required"}
+                return {"status": "login_pending", "details": "login required"}
             page.wait_for_timeout(500)
             return {"status": "ok", "details": "checked notifications"}
 
         def server_check_action(page=page, scraper=scraper):
             needs_login = scraper.login_screen_visible(page)
             if needs_login:
-                scraper.wait_for_login(page)
-                return {"status": "login", "details": "login required"}
+                return {"status": "login_pending", "details": "login required"}
             page.wait_for_timeout(500)
             return {"status": "ok", "details": "checked server list"}
 
@@ -529,9 +543,8 @@ def run_cycle(
                 source_name=source.name,
                 source_id=source_id,
             ):
-                needs_login = scraper.login_required(page, base_url)
-                if needs_login:
-                    scraper.wait_for_login(page)
+                if scraper.login_screen_visible(page):
+                    return {"status": "login_pending", "details": "login required"}
                 discovered = discover_discord_channels(page, base_url)
                 for item in discovered:
                     channel_id = db.upsert_channel(
