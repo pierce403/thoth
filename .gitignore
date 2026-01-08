@@ -9,4 +9,5 @@ __pycache__/
 /data/
 /playwright/.cache/
 /data/profiles/
-/logs/
+/logs/*
+!/logs/README.md
