@@ -35,6 +35,15 @@ def _normalize_discord_url(href: str) -> str:
     return urljoin(DISCORD_BASE, href)
 
 
+def _infer_guild_id_from_url(url: str) -> Optional[str]:
+    ids = _extract_discord_ids(url)
+    if not ids:
+        return None
+    if ids[0] == "@me":
+        return None
+    return ids[0] if ids[0] else None
+
+
 def _normalize_url(url: str) -> str:
     if not url:
         return ""
@@ -48,9 +57,12 @@ def _clean_label(value: str) -> str:
 
 def _extract_discord_ids(href: str) -> Optional[tuple[str, str]]:
     match = re.search(r"/channels/([^/]+)/([^/]+)", href)
-    if not match:
-        return None
-    return match.group(1), match.group(2)
+    if match:
+        return match.group(1), match.group(2)
+    match = re.search(r"/channels/([^/]+)$", href)
+    if match:
+        return match.group(1), ""
+    return None
 
 
 def discover_discord_channels(page: Page, base_url: str) -> list[dict]:
@@ -64,8 +76,14 @@ def discover_discord_channels(page: Page, base_url: str) -> list[dict]:
 
     server_links = page.evaluate(
         """
-        () => Array.from(document.querySelectorAll("nav[aria-label='Servers'] a[href*='/channels/']"))
-          .map(el => el.getAttribute('href') || '')
+        () => {
+          const nav = document.querySelector("nav[aria-label='Servers']");
+          if (!nav) return [];
+          const anchors = Array.from(nav.querySelectorAll("a"));
+          return anchors
+            .map(el => el.getAttribute('href') || '')
+            .filter(href => href.includes('/channels/'));
+        }
         """
     )
     guild_ids: set[str] = set()
@@ -139,6 +157,13 @@ def discover_discord_channels(page: Page, base_url: str) -> list[dict]:
         except Exception:  # noqa: BLE001
             LOGGER.warning("Discord discovery: failed to open guild %s", guild_id)
             continue
+
+    # Fallback: use current URL's guild if we have no sidebar IDs (sometimes nav is virtualized)
+    if not guild_ids:
+        current_guild = _infer_guild_id_from_url(page.url)
+        if current_guild:
+            LOGGER.info("Discord discovery: fallback using current guild %s", current_guild)
+            collect_channels_for_guild(current_guild)
     if not channels:
         raw_links = page.evaluate(
             """
