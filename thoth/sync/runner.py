@@ -44,6 +44,10 @@ def _infer_guild_id_from_url(url: str) -> Optional[str]:
     return ids[0] if ids[0] else None
 
 
+def _is_discord_dm_url(url: str) -> bool:
+    return "/channels/@me" in (url or "")
+
+
 def _normalize_url(url: str) -> str:
     if not url:
         return ""
@@ -596,45 +600,52 @@ def run_cycle(
                 (source_id,),
             ).fetchall()
             if existing:
+                has_server_channels = any(not _is_discord_dm_url(row["url"]) for row in existing)
+                if has_server_channels:
+                    LOGGER.info(
+                        "Using %d previously discovered Discord channels for %s.",
+                        len(existing),
+                        source.name,
+                    )
+                    for row in existing:
+                        state = db.get_sync_state(conn, source_id, row["id"])
+                        mode = state["mode"] or "recent"
+                        reason = "read recent activity" if mode == "recent" else "backfill backlog"
+
+                        def make_sync_action(
+                            page=page,
+                            scraper=scraper,
+                            source_id=source_id,
+                            channel_id=row["id"],
+                            channel_url=row["url"],
+                            label=f"{source.name}:{row['name']}",
+                        ):
+                            return sync_channel(
+                                page,
+                                scraper,
+                                conn,
+                                source_id,
+                                channel_id,
+                                channel_url,
+                                config.scrape,
+                                label,
+                            )
+
+                        queue.add(
+                            task_module.Task(
+                                name="sync_channel",
+                                source=source.name,
+                                channel=row["name"],
+                                reason=reason,
+                                action=make_sync_action,
+                            )
+                        )
+                    continue
+
                 LOGGER.info(
-                    "Using %d previously discovered Discord channels for %s.",
-                    len(existing),
+                    "Only DM channels found for %s. Triggering server discovery.",
                     source.name,
                 )
-                for row in existing:
-                    state = db.get_sync_state(conn, source_id, row["id"])
-                    mode = state["mode"] or "recent"
-                    reason = "read recent activity" if mode == "recent" else "backfill backlog"
-
-                    def make_sync_action(
-                        page=page,
-                        scraper=scraper,
-                        source_id=source_id,
-                        channel_id=row["id"],
-                        channel_url=row["url"],
-                        label=f"{source.name}:{row['name']}",
-                    ):
-                        return sync_channel(
-                            page,
-                            scraper,
-                            conn,
-                            source_id,
-                            channel_id,
-                            channel_url,
-                            config.scrape,
-                            label,
-                        )
-
-                    queue.add(
-                        task_module.Task(
-                            name="sync_channel",
-                            source=source.name,
-                            channel=row["name"],
-                            reason=reason,
-                            action=make_sync_action,
-                        )
-                    )
-                continue
 
             LOGGER.warning(
                 "No enabled channels for source %s. Auto-discovering Discord channels.",
