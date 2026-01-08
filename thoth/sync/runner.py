@@ -174,8 +174,20 @@ class GenericScraper:
         return True
 
     def open_channel(self, page: Page, url: str) -> None:
+        if self.source_type == "discord":
+            ids = _extract_discord_ids(url)
+            if ids:
+                selector = f"a[href*='/channels/{ids[0]}/{ids[1]}']"
+                locator = page.locator(selector)
+                if locator.count() > 0:
+                    locator.first.click()
+                    page.wait_for_timeout(1000)
+                    login_selector = LOGIN_SELECTORS.get(self.source_type)
+                    if login_selector and page.query_selector(login_selector):
+                        self.wait_for_login(page)
+                    return
         if _normalize_url(page.url) != _normalize_url(url):
-            page.goto(url, wait_until="load")
+            page.goto(url, wait_until="domcontentloaded")
             page.wait_for_timeout(1000)
         login_selector = LOGIN_SELECTORS.get(self.source_type)
         if login_selector and page.query_selector(login_selector):
