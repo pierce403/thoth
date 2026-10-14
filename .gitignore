@@ -12,3 +12,7 @@ __pycache__/
 /data/profiles/
 /logs/*
 !/logs/README.md
+
+node_modules/
+dist/
+.wrangler/
